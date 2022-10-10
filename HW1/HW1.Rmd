@@ -1,0 +1,209 @@
+---
+title: "HW1: Regression Modeling"
+author: "110065508 Cheng-En Lee"
+date: due on 10/11 (Tue)
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Problem1
+
+(a) Exploratory data analysis (EDA) among 4 variables
+
+```{r}
+oz <- read.csv("ozone.csv")
+head(oz)
+pairs(oz)
+```
+
+By the scatter plots, it looks like all the variables have a positive or negative relation with \texttt{ozone}. However, the variable \texttt{radiation} and  \texttt{temperature} seems to have non-linearity relations with \texttt{ozone}. 
+
+To investigate the relation, let's plot the density plots of the residuals. My intuition is: If the log-transformed dataset produce better-distributed residuals, then let's do the log transformed multiple regression.
+
+```{r}
+oz_log <- with(oz, data.frame(log(ozone), log(radiation), log(temperature), 
+                              log(wind)))
+regr_1 = lm(ozone ~ radiation, data=oz)
+regr_1_log = lm(log.ozone. ~ log.radiation., data=oz_log)
+regr_2 = lm(ozone ~ temperature, data=oz)
+regr_2_log = lm(log.ozone. ~ log.temperature., data=oz_log)
+regr_3 = lm(ozone ~ wind, data=oz)
+regr_3_log = lm(log.ozone. ~ log.wind., data=oz_log)
+plot(density(regr_1$residuals), main="Residuals of radiation", col="blue", lwd=2)
+plot(density(regr_1_log$residuals), main="Residuals of radiation (log)", 
+     col="red", lwd=2)
+plot(density(regr_2$residuals), main="Residuals of temperature", col="blue", lwd=2)
+plot(density(regr_2_log$residuals), main="Residuals of temperature (log)", 
+     col="red", lwd=2)
+plot(density(regr_3$residuals), main="Residuals of wind", col="blue", lwd=2)
+plot(density(regr_3_log$residuals), main="Residuals of wind (log)", 
+     col="red", lwd=2)
+```
+The residuals of the log-transformed data are like having normal distribution.
+
+(b) Regression model fitting and model summaries.
+
+First, we compare the convention linear regression (as a baseline) and log transformed multiple regression.
+
+```{r}
+regr <- lm(ozone ~ radiation + temperature + wind, data=oz)
+summary(regr)
+regr_log <- lm(log.ozone. ~ log.radiation. + log.temperature. + log.wind., 
+               data=oz_log)
+summary(regr_log)
+```
+The $R^2$ improved from 0.6062 to 0.6876, which is huge. However, there are about 1/3 variance that are unexplained. Perhaps adding interaction terms improves.
+
+(c) Model selection and diagonostics
+
+My model selection strategy is backward selection. Since the model is not large, I start with all the dependent variables \texttt{temperature}, \texttt{radiation}, and \texttt{wind} and the interaction terms \texttt{log.radiation.*log.temperature.}, \texttt{log.temperature.*log.wind.}, and \texttt{log.radiation.*log.wind.}. The stopping criteria is all the $p$-value are significance (<0.001).
+
+```{r}
+regr_log <- lm(log.ozone. ~ log.radiation. + log.temperature. + log.wind. +  
+               log.radiation.*log.temperature. + 
+               log.temperature.*log.wind. + 
+               log.radiation.*log.wind.,
+               data=oz_log)
+summary(regr_log)
+```
+```{r}
+regr_log <- lm(log.ozone. ~ log.radiation. + log.temperature. + log.wind. +  
+               log.temperature.*log.wind. + 
+               log.radiation.*log.wind.,
+               data=oz_log)
+summary(regr_log)
+```
+```{r}
+regr_log <- lm(log.ozone. ~ log.radiation. + log.temperature. + log.wind. + 
+               log.radiation.*log.wind.,
+               data=oz_log)
+summary(regr_log)
+```
+```{r}
+regr_log <- lm(log.ozone. ~ log.radiation. + log.temperature. + log.wind.,
+               data=oz_log)
+summary(regr_log)
+```
+It looks like the interaction terms do not helps. Hence, simply applying the log-transformed technique is enough. Note that the best results I found on the Internet is $R^2=0.705$ using Poisson regression [1]. My result is near.
+
+(d) Comments on your prediction results and scientific findings. (state at least 3 viewpoints with data evidence)
+
+The model is $$\log(\texttt{ozone})=-10.55570+0.30500\times\log(\texttt{radiation})+3.20478\times\log(\texttt{temperature})-0.66305\times\log(\texttt{wind})$$
+
+My comments:
+
+1. One more \texttt{radiation} leads to 30.5% increase in \texttt{ozone}, and one more \texttt{temperature} leads to 320.4% increase in \texttt{ozone}. Perhaps the more radiation and higher temperature makes oxygen easier to transform into ozone.
+
+2. One more \texttt{wind} leads to 66.3% decrease in \texttt{ozone}. The oxygen molecules may be difficult to react with each other since the wind is strong.
+
+3. The interactions between \texttt{radiation}, \texttt{temperature}, and \texttt{wind} are not significant. They may be not chemically related.
+
+---------------
+
+### Problem2
+
+(a) EDA 
+
+```{r}
+pro <- read.csv("Prostate.csv")
+dim(pro)
+train <-subset(pro, train.idx == 1)
+test <-subset(pro, train.idx == 0)
+head(round(train,3))
+head(round(test,3))
+pairs(pro)
+```
+
+This dataset is about cancer. The dependent \texttt{gleason} is not a category but a score. The target \texttt{lpsa} looks having linear relation with \texttt{lcp} and \texttt{lcavol}.
+
+Since there are many variables now, including all the potential interaction terms is not reasonable. My model selection strategy is:
+
+(1) Using backward selection, until all the $p$-values <0.01.
+
+(2) Investigate the interaction for the remaining variables.
+
+(3) Compared the model with log-transformed model if necessary. Note that some variables has already log-transformed.
+
+(b) Determine a good regression model for predicting \texttt{lpsa} 
+
+Using backward selection
+
+```{r}
+regr_baseline <- lm(lpsa ~ lcavol + lweight + age + lbph + factor(svi) + lcp + gleason 
+           + pgg45, data=train)
+summary(regr_baseline)
+```
+
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + age + lbph + factor(svi) + lcp + gleason 
+           , data=train)
+summary(regr)
+```
+
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + age + lbph + factor(svi) + lcp, data=train)
+summary(regr)
+```
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + age + lbph + factor(svi), data=train)
+summary(regr)
+```
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + age + factor(svi), data=train)
+summary(regr)
+```
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + factor(svi), data=train)
+summary(regr)
+```
+Now the remaining dependent variables, say \texttt{lcavol}, \texttt{lweight}, and \texttt{svi} are significant. Let's take the interaction terms into consideration. Using backward selection again to drop the insignificant interaction terms.
+
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + factor(svi) 
+           + lcavol*lweight + lweight*factor(svi) + lcavol*factor(svi), data=train)
+summary(regr)
+```
+```{r}
+regr <- lm(lpsa ~ lcavol + lweight + factor(svi) 
+           + lcavol*lweight + lcavol*factor(svi), data=train)
+summary(regr)
+```
+```{r}
+regr_trained <- lm(lpsa ~ lcavol + lweight + factor(svi) + lcavol*lweight, data=train)
+summary(regr_trained)
+```
+Hence our model looks like
+$$\texttt{lpsa}=-1.7396 + 1.7308\times\texttt{lcavol} + 0.9439\times\texttt{lweight} + 0.4915\times\texttt{svi}-0.3183\times\texttt{lcavol}*\texttt{lweight}$$
+Compare to the first model, which $R^2=0.6691$. This model not only improved $R^2$ to 0.677 but also more easily to interpret. Also, since the variables \texttt{lpsa}, \texttt{lcavol} and \texttt{lweight} has already log-transformed, for interpretation, it is not necessary to to log-transformed again.
+
+(c) Describe the important main effects and interaction effects.
+
+1. The main effects are \texttt{lcavol}, \texttt{lweight} and \texttt{svi}
+
+2. The interaction term is \texttt{lcavol*lweight}. This suggest that an increase in cancer volume of 1 unit is associated with increased prostate weight of 173.08%; An increase in prostate weight of 1 unit is associated with increased cancer volume of 94.39%.
+
+
+(d) Predict lpsa for the validation data set based on the fitted model, with their prediction intervals. And compared the prediction results to the true observations.  Comment on your model performance.
+
+```{r}
+test_actual <- test$lpsa
+test_pred <- predict(regr_trained, test)
+err <- test_actual - test_pred # error on testing set
+NRMSE <- sqrt(mean((test_pred - test_actual)^2) / mean(test_actual^2)) # RMS
+```
+
+```{r}
+test_actual <- test$lpsa
+test_pred <- predict(regr_baseline, test)
+NRMSE <- sqrt(mean((test_pred - test_actual)^2) / mean(test_actual^2)) # RMS
+```
+My model gives NRMSE=0.3503, while the baseline model gives NRMSE=0.3363. This shows that our model still fits well.
+
+---------------
+
+### Reference
+[1] Finding a Suitable Linear Model for Ozone Prediction, https://www.datascienceblog.net/post/machine-learning/improving_ozone_prediction/
+
