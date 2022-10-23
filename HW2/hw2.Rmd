@@ -1,0 +1,437 @@
+---
+title: 'HW2: Classification'
+author: "Cheng-En Lee, 110065508"
+date: "due on 10/25 (Tue) 9am"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+### Data Source
+
+```{r}
+library(mlbench) #install package first!!
+library(corrplot)
+library(MASS)
+library(Hmisc)
+library(class)
+library(nnet)
+library(glmnet)
+```
+
+## Problem 1: Wisconsin Breast Cancer Data
+
+### 1. EDA
+
+(1) Data preprocessing:
+
+These data consist of 699 observations on 11 variables, one being "ID" variable, 9 being ordered or nominal variables, and 1 target class 
+
+```{r, fig.height = 9, fig.width = 9}
+data(BreastCancer)
+head(BreastCancer)
+dim(BreastCancer)
+
+#make variables numeric (remove variable:ID) and save the data as a dataframe object
+dat1 = matrix(as.numeric(as.matrix(BreastCancer[,2:10])), 699, 9) 
+dat1 = data.frame(dat1)
+colnames(dat1) <- colnames(BreastCancer)[2:10]
+head(dat1)
+dat1$case = as.numeric(BreastCancer$Class=="malignant")
+```
+
+(2) There are 16 NA's in variable **Bare.nuclei**. Hence, I only use the observations with complete data.
+
+```{r, fig.height = 9, fig.width = 9}
+#remove missing data (NA)
+dat1 = na.omit(dat1)
+dim(dat1) #check data dimension
+```
+
+(3) Plot the scatter plot and the histrogram of the dataset
+
+```{r, fig.height = 9, fig.width = 9}
+pairs(dat1[,1:9], col=as.factor(dat1[,10]), pch="+")
+```
+
+```{r, fig.height = 9, fig.width = 9}
+hist.data.frame(dat1[,1:9])
+```
+
+This shows that the features does not follows a Gaussian distribution. Some of the assumptions using in data may need to be adjust.
+
+(3) There are high correlations between all input variables.
+
+```{r, fig.height = 6, fig.width = 6}
+#view variable correlations:
+round(cor(dat1),2)
+corrplot(cor(dat1))
+```
+
+(4) There is a class unbalance, but not severe.
+
+```{r, fig.height = 6, fig.width = 6}
+as.data.frame(table(dat1$case))
+```
+
+### 2. Performing the classification task
+
+Do the train test split first. The splitting proportion is set to 0.7.
+
+```{r, fig.height = 6, fig.width = 6}
+set.seed(48763)
+sample <- sample(c(TRUE, FALSE), nrow(dat1), replace=TRUE, prob=c(0.7,0.3))
+train <- dat1[sample, ]
+test <- dat1[!sample, ]
+```
+
+(1) logistic regression
+
+Let's consider the vanilla logistic regression with all features.
+
+```{r, fig.height = 6, fig.width = 6}
+glm.fits <- glm(
+    case ~  Cl.thickness + Cell.size + Cell.shape + Marg.adhesion + 
+            Epith.c.size + Bare.nuclei + Bl.cromatin + Normal.nucleoli + 
+            Mitoses,
+    data = train, 
+    family = binomial
+  )
+summary(glm.fits)
+```
+
+Making predictions on both the training set and the testing set, and derive the confusion matrix. The performance looks good since overall training accuracy is 97.93% and the testing accuracy is 0.93%.
+
+```{r, fig.height = 6, fig.width = 6}
+# Predicting on the training set
+glm.probs <- predict(glm.fits, train, type = "response")
+glm.pred <- rep(0, length(train$case))
+glm.pred[glm.probs > .5] = 1
+table(glm.pred, train$case)
+mean(glm.pred == train$case)
+
+# Predicting on the test set
+glm.probs_test <- predict(glm.fits, test, type = "response")
+glm.pred_test <- rep(0, length(test$case))
+glm.pred_test[glm.probs_test > .5] = 1
+table(glm.pred_test, test$case)
+mean(glm.pred_test == test$case)
+```
+
+Let's use backward selection [1] to choose important features to see if further improvement can be performed.
+
+```{r, fig.height = 6, fig.width = 6}
+glm.fits <- glm(
+    case ~  Cl.thickness + Cell.size + Marg.adhesion + 
+            Epith.c.size + Bare.nuclei + Bl.cromatin + Normal.nucleoli + 
+            Mitoses,
+    data = train, 
+    family = binomial
+  )
+summary(glm.fits)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+glm.fits <- glm(
+    case ~  Cl.thickness + Marg.adhesion + 
+            Epith.c.size + Bare.nuclei + Bl.cromatin + Normal.nucleoli + 
+            Mitoses,
+    data = train, 
+    family = binomial
+  )
+summary(glm.fits)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+glm.fits <- glm(
+    case ~  Cl.thickness + Marg.adhesion + 
+            Bare.nuclei + Bl.cromatin + Normal.nucleoli + 
+            Mitoses,
+    data = train, 
+    family = binomial
+  )
+summary(glm.fits)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+glm.fits <- glm(
+    case ~  Cl.thickness + Marg.adhesion + 
+            Bare.nuclei + Bl.cromatin + Normal.nucleoli,
+    data = train, 
+    family = binomial
+  )
+summary(glm.fits)
+```
+
+Making predictions again.
+
+```{r, fig.height = 6, fig.width = 6}
+# Predicting on the training set
+glm.probs <- predict(glm.fits, train, type = "response")
+glm.pred <- rep(0, length(train$case))
+glm.pred[glm.probs > .5] = 1
+table(glm.pred, train$case)
+mean(glm.pred == train$case)
+
+# Predicting on the test set
+glm.probs_test <- predict(glm.fits, test, type = "response")
+glm.pred_test <- rep(0, length(test$case))
+glm.pred_test[glm.probs_test > .5] = 1
+table(glm.pred_test, test$case)
+mean(glm.pred_test == test$case)
+```
+
+The performance improved to 98.14% and 95%, respectively. Also, the gap between training and testing is reduced. This is because through the backward selection, the noise and the non-important features are filtered out, and the complexity of model has thus reduced. 
+
+(2) Linear Discriminate Analysis
+
+```{r, fig.height = 6, fig.width = 6}
+lda.fit <- lda(case ~ Cl.thickness + Cell.size + Cell.shape + 
+                      Marg.adhesion + Epith.c.size + Bare.nuclei + 
+                      Bl.cromatin + Normal.nucleoli + Mitoses, 
+               data = train)
+lda.fit
+plot(lda.fit)
+```
+
+Let's see the prediction results.
+
+```{r, fig.height = 6, fig.width = 6}
+# Predict on training set
+lda.pred <- predict(lda.fit, train)
+lda.class <- lda.pred$class
+table(lda.class, train$case)
+mean(lda.class == train$case)
+
+# Predict on testing set
+lda.pred_test <- predict(lda.fit, test)
+lda.class <- lda.pred_test$class
+table(lda.class, test$case)
+mean(lda.class == test$case)
+```
+
+Since the LDA and logistic regression are almost the same given the same features, let's consider the LDA with features selected in (1).
+
+```{r, fig.height = 6, fig.width = 6}
+lda2.fit <- lda(case ~ Cl.thickness + Marg.adhesion + Bare.nuclei + 
+                      Bl.cromatin + Normal.nucleoli, 
+               data = train)
+lda2.fit
+plot(lda2.fit)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+# Predict on training set
+lda2.pred <- predict(lda2.fit, train)
+lda2.class <- lda2.pred$class
+table(lda2.class, train$case)
+mean(lda2.class == train$case)
+
+# Predict on testing set
+lda2.pred_test <- predict(lda2.fit, test)
+lda2.class <- lda2.pred_test$class
+table(lda2.class, test$case)
+mean(lda2.class == test$case)
+```
+
+The performance does not improved. This may caused from the non-Gaussian distribution of the data
+
+(3) Quadratic Discriminant Analysis
+
+```{r, fig.height = 6, fig.width = 6}
+qda.fit <- qda(case ~ Cl.thickness + Cell.size + Cell.shape + 
+                      Marg.adhesion + Epith.c.size + Bare.nuclei + 
+                      Bl.cromatin + Normal.nucleoli + Mitoses, 
+               data = train)
+qda.fit
+```
+
+```{r, fig.height = 6, fig.width = 6}
+# Predict on training set
+qda.pred <- predict(qda.fit, train)
+qda.class <- qda.pred$class
+table(qda.class, train$case)
+mean(qda.class == train$case)
+
+# Predict on testing set
+qda.pred_test <- predict(qda.fit, test)
+qda.class <- qda.pred_test$class
+table(qda.class, test$case)
+mean(qda.class == test$case)
+```
+
+QDA performs as LDA. No significant difference.
+
+(4) KNN
+
+Let's use a hieuristic KNN with 1 neighbors.
+
+```{r, fig.height = 6, fig.width = 6}
+knn.pred <- knn(train, test, train$case, k = 1)
+table(knn.pred, test$case)
+mean(knn.pred == test$case)
+```
+
+Now, consider the case $K=1\sim 10$. Plot the accuracy along with the value of $K$.
+
+```{r, fig.height = 6, fig.width = 6}
+accuracy = c()
+K = c(1:50)
+for(k in K)
+{
+  knn.pred <- knn(train, test, train$case, k = k)
+  acc <- mean(knn.pred == test$case)
+  accuracy <- c(accuracy, acc)
+}
+plot(K, accuracy, type = "l", ylim = c(0.9, 1))
+```
+
+Hence the case $K=1$ is the most simple model with the best accuracy 96.5%.
+
+
+### 3. Report the performance of your classifiers 
+
+
+
+### 4. Make your conclusions on data contents
+
+
+
+## Problem 2: Glass Data
+
+### 1. EDA
+
+These data consist of 214 examples of the chemical analysis of 6 different types of glass (the target class to be predicted). There are 9 chemical variables for glass classification.
+
+```{r, fig.height = 9, fig.width = 9}
+data(Glass)
+head(Glass)
+```
+
+```{r, fig.height = 9, fig.width = 9}
+#View(Glass)
+summary(Glass)
+```
+
+(1) Plot the scatter plot and the histrogram of the dataset
+
+```{r, fig.height = 9, fig.width = 9}
+pairs(Glass[,1:9], col=Glass[,10], pch="+") #view data (colored by glass type)
+```
+
+```{r, fig.height = 9, fig.width = 9}
+dat2 = data.frame(Glass)
+hist.data.frame(dat2[,1:9])
+```
+
+Now the distribution looks more likely a bell-shaped. Also, since the correlation between features are smaller than that in problem 1 (see below), I expect the classifications would be easier than problem 1.
+
+(2) Plot the correlation matrix of the dataset
+
+```{r, fig.height = 6, fig.width = 6}
+round(cor(dat2[,1:9]),2) #only for numeric variables
+corrplot(cor(dat2[,1:9]))
+```
+
+### 2. Performing the classification task
+
+Do the train test split first. The splitting proportion is set to 0.7.
+
+```{r, fig.height = 6, fig.width = 6}
+set.seed(48763)
+sample <- sample(c(TRUE, FALSE), nrow(dat2), replace=TRUE, prob=c(0.7,0.3))
+train <- dat2[sample, ]
+test <- dat2[!sample, ]
+train.x <- as.matrix(train[1:9])
+train.y <- as.matrix(train[10])
+test.x <- as.matrix(test[1:9])
+test.y <- as.matrix(test[10])
+```
+
+(1) Logistic Regression
+
+```{r, fig.height = 6, fig.width = 6}
+# fitting via glmnet
+mod.glmnet <- glmnet::glmnet(
+  x = train.x, 
+  y = train.y,
+  family = "multinomial"
+)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+# Predicting on the training set
+predicted_classes <-predict(object = mod.glmnet, 
+                            newx = train.x, 
+                            type = "class")
+mean(predicted_classes == train$Type) # Model accuracy
+
+# Predicting on the test set
+predicted_classes <-predict(object = mod.glmnet, 
+                            newx = test.x, 
+                            type = "class")
+mean(predicted_classes == test$Type) # Model accuracy
+```
+
+(2) LDA
+
+```{r, fig.height = 6, fig.width = 6}
+lda.fit <- lda(Type ~ RI + Na + Mg + Al + Si + K + Ca + Ba + Fe,
+               data = train)
+lda.fit
+plot(lda.fit)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+# Predict on training set
+lda.pred <- predict(lda.fit, train)
+lda.class <- lda.pred$class
+table(lda.class, train$Type)
+mean(lda.class == train$Type)
+
+# Predict on testing set
+lda.pred_test <- predict(lda.fit, test)
+lda.class <- lda.pred_test$class
+table(lda.class, test$Type)
+mean(lda.class == test$Type)
+```
+
+(3) KNN
+
+```{r, fig.height = 6, fig.width = 6}
+knn.pred <- knn(train, test, train$Type, k = 1)
+table(knn.pred, test$Type)
+mean(knn.pred == test$Type)
+```
+
+```{r, fig.height = 6, fig.width = 6}
+accuracy = c()
+K = c(1:50)
+for(k in K)
+{
+  knn.pred <- knn(train, test, train$Type, k = k)
+  acc <- mean(knn.pred == test$Type)
+  accuracy <- c(accuracy, acc)
+}
+plot(K, accuracy, type = "l", ylim = c(0.7, 1))
+```
+
+### 3. Report the performance of your classifiers
+
+
+
+### 4. Make your conclusions on data contents
+
+
+
+
+## Reference
+
+[1] https://en.wikipedia.org/wiki/Stepwise_regression
+
+
+
