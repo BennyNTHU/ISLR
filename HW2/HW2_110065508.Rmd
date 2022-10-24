@@ -58,19 +58,23 @@ dim(dat1) #check data dimension
 pairs(dat1[,1:9], col=as.factor(dat1[,10]), pch="+")
 ```
 
+These features has a integer value. Besides, some of the features \texttt{Cl.thickness}, \texttt{Cell.size}, \texttt{Cell.shape}, and \texttt{Marg.adhesion} seems to separate the two classes. 
+
 ```{r, fig.height = 9, fig.width = 9}
 hist.data.frame(dat1[,1:9])
 ```
 
 This shows that the features does not follows a Gaussian distribution. Some of the assumptions using in data may need to be adjust.
 
-(3) There are high correlations between all input variables.
+(3) Correlation plots
 
 ```{r, fig.height = 6, fig.width = 6}
 #view variable correlations:
 round(cor(dat1),2)
 corrplot(cor(dat1))
 ```
+
+There are high correlations between all input variables.
 
 (4) There is a class unbalance, but not severe.
 
@@ -238,7 +242,7 @@ table(lda2.class, test$case)
 mean(lda2.class == test$case)
 ```
 
-The performance does not improved. This may caused from the non-Gaussian distribution of the data
+The performance does not improved. This may caused from the non-Gaussian distribution of the data.
 
 (3) Quadratic Discriminant Analysis
 
@@ -295,11 +299,21 @@ Hence the case $K=1$ is the most simple model with the best accuracy 96.5%.
 
 ### 3. Report the performance of your classifiers 
 
+Beside the discussions of the classifiers, we sum up the performance (testing accuracy) of each classifiers in the following:
 
+(1) Logistic regression: 95%
+
+(2) LDA: 93%
+
+(3) QDA: 93.5%
+
+(4) KNN: 96.5%
+
+As a final remark, though KNN achieves the highest score; however, there is still a chance that logistic regression outperforms it. The data has high correlation, some dimension reduction methods may help.
 
 ### 4. Make your conclusions on data contents
 
-
+To inspect whether one has a breast cancer, we may consider the features \texttt{Cl.thickness}, \texttt{Marg.adhesion }, \texttt{Bare.nuclei}, \texttt{Bl.cromatin} and \texttt{Normal.nucleoli}. 
 
 ## Problem 2: Glass Data
 
@@ -323,6 +337,8 @@ summary(Glass)
 pairs(Glass[,1:9], col=Glass[,10], pch="+") #view data (colored by glass type)
 ```
 
+In this figure, different colors means a different class of glass. Some features are shown to be have a structure, such as \texttt{Al},\texttt{Si}, and \texttt{Na}.
+
 ```{r, fig.height = 9, fig.width = 9}
 dat2 = data.frame(Glass)
 hist.data.frame(dat2[,1:9])
@@ -336,6 +352,16 @@ Now the distribution looks more likely a bell-shaped. Also, since the correlatio
 round(cor(dat2[,1:9]),2) #only for numeric variables
 corrplot(cor(dat2[,1:9]))
 ```
+
+The correlation between features are mostly weak besides \texttt{Ca} and \texttt{Rl}. I've found that some glasses add CaCO$_3$ during manufacturing. This may cause the refractive index increases if more are added.
+
+(3) Boxplot
+
+```{r, fig.height = 9, fig.width = 9}
+boxplot(Glass)
+```
+
+This figure shows that glass are mostly made of silicon, then Na and Ca. Other elements contains a small proportion.
 
 ### 2. Performing the classification task
 
@@ -377,6 +403,8 @@ predicted_classes <-predict(object = mod.glmnet,
 mean(predicted_classes == test$Type) # Model accuracy
 ```
 
+Since this is a logistic regression of multiple class, we cannot use backward selection [3]. All we can do is putting all the features in. then we found that the performance is poor with a 59% test accuracy.
+
 (2) LDA
 
 ```{r, fig.height = 6, fig.width = 6}
@@ -400,6 +428,8 @@ table(lda.class, test$Type)
 mean(lda.class == test$Type)
 ```
 
+LDA also performs badly, as expected. Besides, QDA cannot be performed because I encounter the error [4]. This seems like the problem for the dataset itself.
+
 (3) KNN
 
 ```{r, fig.height = 6, fig.width = 6}
@@ -407,6 +437,8 @@ knn.pred <- knn(train, test, train$Type, k = 1)
 table(knn.pred, test$Type)
 mean(knn.pred == test$Type)
 ```
+
+Tuning $K$ such that KNN has the best performance.
 
 ```{r, fig.height = 6, fig.width = 6}
 accuracy = c()
@@ -420,18 +452,30 @@ for(k in K)
 plot(K, accuracy, type = "l", ylim = c(0.7, 1))
 ```
 
+Hence the case $K=1$ is the best model.
+
 ### 3. Report the performance of your classifiers
 
+In this case, the logistic regression and LDA shows a low performance compared to KNN. 
 
+(1) Logistic regression: 59.58%
+
+(2) LDA: 60%
+
+(3) QDA: Cannot perform
+
+(4) KNN: 95.38%
 
 ### 4. Make your conclusions on data contents
 
-
-
+Since KNN gives the best performance, we may consider that the same class of glass tends to share similar proportion of ingredients.
 
 ## Reference
 
-[1] https://en.wikipedia.org/wiki/Stepwise_regression
+[1] Stepwise regression, https://en.wikipedia.org/wiki/Stepwise_regression
 
+[2] Glass, https://www.congcal.com/markets/glass/?doing_wp_cron=1666634304.4064259529113769531250
 
+[3] When using glmnet how to report p-value significance to claim significance of predictors? https://stats.stackexchange.com/questions/45449/when-using-glmnet-how-to-report-p-value-significance-to-claim-significance-of-pr
 
+[4] R Error : some group is too small for 'qda', https://stackoverflow.com/questions/20481772/r-error-some-group-is-too-small-for-qda
