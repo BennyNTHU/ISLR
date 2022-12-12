@@ -1,0 +1,74 @@
+---
+title: 'HW4: Nonlinear and Ensemble  Modeling (due 12/12 Monday 23:30)'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Problem 1: Bike Sharing Dataset
+
+This data set collects the bike sharing counts aggregated on daily basis (2011-2012) together with the calender information (year/season/weekday/holiday) and daily weather conditions. 
+There are 4 weather realted variables:  
+
+* weathersit: (GOOD, MISTY, RAIN/SNOW/STORM) 
+
+* temperature (in Celsius)  
+
+* humidity (relative to 100%)
+
+* windspeed 
+
+The objective is to predict the bike sharing counts given a date, and figure out the impacts on the counts due to weather conditions.
+
+More data descriptions can be found at http://archive.ics.uci.edu/ml/datasets/Bike+Sharing+Dataset
+
+### Your analysis should include the following:
+
+* EDA and preliminary findings.
+
+* Fit tree-based models and summarize their prediction performance. The tuning parameters for tree-based models should be determined via cross validation.
+
+* Fit a linear regression and a nonlinear regression model for the target variable **count**. Again, your models should go through a proper model selection procedure. Summarize the selected models with their prediction performance.
+
+* Identify the important input variables for predicting bike sharing counts. In particular, characterize the effects of weather conditions on the bike counts **quantitatively**.
+
+* Give a brief analysis summary.
+
+
+```{r}
+bike <- read.csv(file="bike.csv") #read data
+head(bike)
+#View(bike)  
+```
+
+
+
+------------------------------------------------------------- 
+## Problem 2: Airline Customer Satisfaction
+
+
+This dataset contains an airline passenger satisfaction survey. 
+The data collect the demographic information about the customers, their feedback regarding the flight experiences and some flight information.
+
+The goal of the analysis has two folds: 
+  
+* Find a good model for the classification of customer satisfaction, and summarize the performance. 
+
+* Identify the important aspects of the flight experience related to customer satisfaction (or dis-satisfaction).
+Based on your findings, give some specific suggestions (provided with the data evidence) to the airline company for achieving a higher customer satisfaction. 
+
+* Add some noise factors (both continuous variable and categorical variable) in your data set (call these added variables z1-z?), and check the ranking of variable importance of these z-variables relative to the original meaningful input variables. Make your comments regarding this experiment. 
+
+
+More data descriptions can be found at 
+https://www.kaggle.com/teejmahal20/airline-passenger-satisfaction
+
+```{r}
+survey <- read.csv(file="airline.csv") #read data
+head(survey)
+survey1 <- na.omit(survey) #remove missing data
+```
+
