@@ -1,0 +1,141 @@
+---
+title: 'HW5: Classification and Representation (due 1/9 23:30)'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Problem 1: Fault Classification
+
+This problem concerns about the quality of a casting item. 
+This data set collects the images (100x100 pixels) of 6633 items, together with their quality labels (defective or ok).
+
+The objective is to predict the label (defect or ok) of each image. 
+
+### Your analysis should include the following:
+
+* The training procedures of the classifiers　(at least 2 different classifiers),　and their performance comparisons.
+
+* A brief analysis summary.
+
+* (Bonus) Can defect items (image data) be clustered with patterns (sub-types)? Explore your findings.
+
+
+### Read image into data frame
+
+```{r}
+#install required packages
+library("jpeg")
+library("plyr")
+
+setwd("casting_100x100")
+
+def_paths <- dir("def_front")
+ok_paths <- dir("ok_front")
+
+data_def = sapply(1:length(def_paths), function(x){
+  tmp = readJPEG(paste0("def_front/", def_paths[x]))[,,1]
+  tmp = as.vector(tmp)
+  return(tmp)
+})
+
+data_ok = sapply(1:length(ok_paths), function(x){
+  tmp = readJPEG(paste0("ok_front/", ok_paths[x]))[,,1]
+  tmp = as.vector(tmp)
+  return(tmp)
+})
+
+data = as.data.frame(rbind(t(data_def), t(data_ok)))
+data$y = as.factor(c(rep(1,length(def_paths)), rep(0,length(ok_paths))))
+dim(data)
+
+## Data Preprocessing
+
+show_image = function(img_cast, col = gray(1:20/20), ...){
+  image(matrix(as.matrix(img_cast), ncol = 100, byrow = TRUE)[, 100:1], col = col, ...)
+}
+
+## show images for a defect item and a good (OK) item
+par(mfrow = c(1,1), pty="s")
+show_image(data[1,-10001], col = gray(1:20/20), axes=F); box(); title("Defect Item (id=1)")
+show_image(data[length(def_paths)+1,-10001], col = gray(1:20/20), axes=F); box(); title("OK Item (id=3759)")
+```
+
+Your analysis starts here...
+
+------------------------------------------------------------------------------
+
+
+## Problem 2: Forecast for SP500 returns 
+
+
+This problem concerns about 2 tasks on forecasting the return for SP500: 
+
+* Task 1 (regression): forecast the daily return value;
+* Task 2 (classification): forecast the trend ("up" if return greater than zero; or "down" otherwise).
+
+The data can be retrieved from yahoo into R via the function `getSymbols` in `quantmod` package.
+In this homework, we take the data before 2021/12/31  as the training data; and the data after 2022/1/1 as the testing data. 
+
+You may replace the SP500 returns by any other return series of your interest for this problem.
+
+
+### Your analysis should include the following:
+
+* The training procedures of the predictive models for both tasks. (training period: before 2022)
+
+* Summarize the prediction performance in the testing period (2022/1/1-2022/12/31). 
+
+
+
+### Get data
+
+```{r}
+#install required package
+
+library(quantmod)   
+
+getSymbols("SPY", src = "yahoo", from = as.Date("2010-01-01"), to = as.Date("2021-12-31")) 
+
+chartSeries(SPY, theme = chartTheme("white"))
+
+head(SPY);
+tail(SPY)
+     
+# compute daily returns:
+rr <- exp(diff(log(SPY$SPY.Close)))-1
+Direction <- ifelse(rr >= 0, "Up", "Down")
+names(Direction) <- "Direction"
+
+# create lag variables (you may use more lags or other info from SPY object)
+rr.Lag <- Lag(rr, 1:5)
+Volume.Lag <- Lag(SPY$SPY.Volume,1:5)
+
+#For Task 1 (respones variable: rr):
+SPY.return <- data.frame(rr, rr.Lag, Volume.Lag/10^9) #rescale Volume such that all scales are comparable!
+names(SPY.return) <- c("r", "r.Lag.1", "r.Lag.2", "r.Lag.3",  "r.Lag.4", "r.Lag.5", 
+                            "v.Lag.1", "v.Lag.2", "v.Lag.3",  "v.Lag.4", "v.Lag.5")
+
+head(SPY.return)
+SPY.return = na.omit(SPY.return) #remove NA's
+
+apply(SPY.return,2,mean)
+apply(SPY.return,2,sd)
+
+
+#For Task 2 (response variable: Direction):
+SPY.trend <- data.frame(Direction, rr.Lag, Volume.Lag/10^9) 
+names(SPY.trend) <- c("Direction", "r.Lag.1", "r.Lag.2", "r.Lag.3",  "r.Lag.4", "r.Lag.5", 
+                       "v.Lag.1", "v.Lag.2", "v.Lag.3",  "v.Lag.4", "v.Lag.5")
+
+head(SPY.trend)
+SPY.trend = na.omit(SPY.trend) #remove NA's
+```
+
+
+Your analysis starts here...
+
+
