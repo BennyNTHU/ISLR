@@ -1,0 +1,264 @@
+---
+title: "FP"
+output: html_document
+date: "2023-01-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library("jpeg")
+library("plyr")
+library(TTR)
+library(gbm)
+library(tree)
+library(e1071)
+library(caret)
+library(class)
+library(glmnet)
+library(ggplot2) 
+library(xgboost)
+library(quantmod)
+library(tidyverse) # %>%
+library(ggcorrplot)
+library(randomForest)
+```
+
+## 1. Data Preprocessing
+
+### (1) Read Data
+
+```{r}
+card <- read.csv(file="Credit Card Defaulter Prediction.csv") #read data
+card <- card[,-1] # Drop the ID column
+head(card) 
+### ONLY FOR TESTING!!!
+card <- card[1:100,]
+```
+
+### (2) Clean Garbage
+
+```{r}
+unique(card["SEX"])
+```
+
+```{r}
+unique(card["EDUCATION"])
+```
+
+There are 331 of "unknowns" and 14 of "0" in \texttt{EDUCATION}, we delete these data.
+
+```{r}
+unique(card["MARRIAGE"])
+```
+
+There are 123 of "Other" in \texttt{MARRIAGE}, we delete these data.
+
+```{r}
+card <- subset(card, MARRIAGE!="Other" & EDUCATION!="Others" & card$EDUCATION!=0 & card$MARRIAGE!=0)
+card <- na.omit(card)
+```
+
+### (3) One-hot encoding
+
+```{r}
+# Separate the labels and the features first
+label <- card[,24]
+card <- card[,-24]
+
+# One-hot encoding for the categorical features
+dummy <- dummyVars(" ~ .", data=card)
+card <- data.frame(predict(dummy, newdata=card))
+
+# Recover the dataset
+card <- cbind(card, label)
+head(card)
+```
+
+### (4) Train-test split
+
+```{r}
+# Train test split
+set.seed(48763)
+train_index <- sample(1:nrow(card),(0.7*nrow(card)))
+label <- card[,29]
+
+# The training set and testing set
+train <- card[train_index,]
+test <- card[-train_index,]
+
+# For SVM
+x_train <- train[,-29]
+y_train <-factor(label[train_index])
+x_test <- test[,-29]
+y_test <- factor(label[-train_index])
+
+# For XGBoost
+train_dummy_X <- model.matrix(~.,train)[,-1][,-29]
+test_dummy_X <- model.matrix(~.,test)[,-1][,-29]
+train_dummy_y <- as.numeric(as.factor(y_train))-1
+test_dummy_y <- as.numeric(as.factor(y_test))-1
+```
+
+## 2. EDA
+
+```{r}
+```
+
+## 3. Different Classification Algorithm
+
+### (1) SVM
+
+```{r}
+### tuning parameters (cost,gamma) via 10-fold CV
+set.seed(1)
+tune.out <- tune(svm, 
+                 train.x = x_train,
+                 train.y = y_train,
+                 ranges = list( # No need to scale in this case
+                   cost = c(0.1, 1, 10, 100, 1000),
+                   gamma = c(0.5, 1, 2, 3, 4),
+                   kernel = c('radial', 'linear', 'polynomial', 'sigmoid'),
+                   scale = TRUE # Need to scale in this case
+                   )
+                 )
+summary(tune.out)
+```
+
+```{r}
+table(true = y_test, 
+      pred = predict(tune.out$best.model, newdata = x_test))
+```
+
+### (2) XGBoost
+
+```{r}
+model_xgb <- xgb.cv(data = train_dummy_X,
+                    label = train_dummy_y,
+                    nfold = 5,
+                    nrounds = 200,
+                    objective='binary:logistic',
+                    eval_metric = "error",
+                    verbose = F)
+```
+
+```{r}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+  eta = c(0.01,0.05,0.1,0.15,0.2,0.25,0.3),
+  max_depth = c(2:5),
+  min_child_weight = 2*c(1:5),
+  subsample = c(0.6,0.7,0.8,0.9),
+  colsample_bytree = c(0.6,0.7,0.8,0.9),
+  optimal_trees = 0,               # a place to dump results
+  min_error = 0)                   # a place to dump results
+```
+
+```{r}
+# grid search
+for(i in 1:nrow(hyper_grid)) {
+
+  # create parameter list
+  params <- list(
+    eta = hyper_grid$eta[i],
+    max_depth = hyper_grid$max_depth[i],
+    min_child_weight = hyper_grid$min_child_weight[i],
+    subsample = hyper_grid$subsample[i],
+    colsample_bytree = hyper_grid$colsample_bytree[i])
+
+  # reproducibility
+  set.seed(123)
+
+  # train model
+  xgb.tune <- xgb.cv(
+    params = params,
+    data = train_dummy_X,
+    label = train_dummy_y,
+    nrounds = 500,
+    nfold = 5,
+    objective = "binary:logistic",
+    eval_metric = "error",
+    verbose = 0,               # silent,
+    early_stopping_rounds = 10) # stop if no improvement for 10 consecutive trees
+
+
+  # add min training error and trees to grid
+  hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_error_mean)
+  hyper_grid$min_error[i] <- min(xgb.tune$evaluation_log$test_error_mean)
+}
+```
+
+```{r}
+best_para <- hyper_grid %>%
+  dplyr::arrange(min_error) %>%
+  head(1)
+```
+
+```{r}
+# The best parameter is listed below:
+# eta=best_para$eta=0.05
+# max_depth=best_para$max_depth=2
+# min_child_weight=best_para$min_child_weight=2
+# subsample=best_para$subsample=0.6
+# colsample_bytree=best_para$colsample_bytree=0.6
+# optimal_trees=best_para$optimal_trees=14
+```
+
+```{r}
+# parameter list
+params <- list(
+  eta = 0.05,
+  max_depth = 2,
+  min_child_weight = 2,
+  subsample = 0.6,
+  colsample_bytree = 0.6)
+```
+
+```{r}
+set.seed(114514)
+# train final model
+modfinal_xgb <- xgboost(
+  params = params,
+  data = train_dummy_X, 
+  label = train_dummy_y,
+  nrounds = 71,
+  objective='binary:logistic',
+  eval_metric = "error",  
+  verbose = 0)
+```
+
+```{r}
+y_pred <- predict(modfinal_xgb, newdata = test_dummy_X)
+y_pred <- as.numeric(y_pred > 0.5)
+# Confusion Matrix
+confusion_mtx = table(test_dummy_y, y_pred)
+confusion_mtx
+```
+
+```{r}
+xgb.importance(model = modfinal_xgb) %>% 
+  as.data.frame() %>% 
+  `colnames<-`(c("Feature",'Gain','Cover',"Frequency")) %>%
+  arrange(desc(Gain)) %>% 
+  top_n(15,wt = Gain) %>% 
+  ggplot(aes(x = reorder(Feature, Gain),y = Gain)) +
+  geom_col(fill = 'steelblue', color = 'black') +
+  coord_flip() +
+  ggtitle(label = "XGBoost") +
+  xlab('Variable')+
+  ylab('Gain')+
+  theme(plot.title=element_text(hjust=0.5,size=15),
+        axis.title=element_text(size=15))
+```
+
+## 5. Summary
+
+
+
+
+
+
+
+
