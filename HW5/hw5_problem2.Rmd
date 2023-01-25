@@ -1,6 +1,8 @@
 ---
-title: 'HW5: Classification and Representation (due 1/9 23:30)'
-output: html_document
+title: 'HW5: Problem 2)'
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -23,193 +25,6 @@ library(ggcorrplot)
 library(TTR)
 library(quantmod) 
 ```
-
-## Problem 1: Fault Classification
-
-```{r}
-setwd("casting_100x100")
-
-def_paths <- dir("def_front")
-ok_paths <- dir("ok_front")
-
-data_def = sapply(1:length(def_paths), function(x){
-  tmp = readJPEG(paste0("def_front/", def_paths[x]))[,,1]
-  tmp = as.vector(tmp)
-  return(tmp)
-})
-
-data_ok = sapply(1:length(ok_paths), function(x){
-  tmp = readJPEG(paste0("ok_front/", ok_paths[x]))[,,1]
-  tmp = as.vector(tmp)
-  return(tmp)
-})
-
-data = as.data.frame(rbind(t(data_def), t(data_ok)))
-data$y = as.factor(c(rep(1,length(def_paths)), rep(0,length(ok_paths))))
-dim(data)
-
-## Data Preprocessing
-
-show_image = function(img_cast, col = gray(1:20/20), ...){
-  image(matrix(as.matrix(img_cast), ncol = 100, byrow = TRUE)[, 100:1], col = col, ...)
-}
-
-## show images for a defect item and a good (OK) item
-par(mfrow = c(1,1), pty="s")
-show_image(data[1,-10001], col = gray(1:20/20), axes=F); box(); title("Defect Item (id=1)")
-show_image(data[length(def_paths)+1,-10001], col = gray(1:20/20), axes=F); box(); title("OK Item (id=3759)")
-```
-
-```{r}
-### For testing only!!!
-#data <- rbind(data[1:10,],data[6623:6633,])
-```
-
-### 1. Dimension Reduction
-
-It is really impossible to take all 10000 pixels into consideration. Hence, I prefer a PCA dimension reduction before any further classification effort
-
-```{r}
-pcaCharts <- function(x) {
-    x.var <- x$sdev ^ 2
-    x.pvar <- x.var/sum(x.var)
-    #print("proportions of variance:")
-    #print(x.pvar)
-    
-    par(mfrow=c(2,2))
-    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), type='b')
-    plot(cumsum(x.pvar),
-         xlab="Principal component", 
-         ylab="Cumulative Proportion of variance explained", 
-         ylim=c(0,1), 
-         type='b')
-    screeplot(x)
-    screeplot(x,type="l")
-    par(mfrow=c(1,1))
-}
-```
-
-```{r}
-find_pc_num <- function(x) { # 80% of cumulative proportion of variance
-    x.var <- x$sdev ^ 2
-    x.pvar <- x.var/sum(x.var)
-    min(which(cumsum(x.pvar) >0.8))
-}
-```
-
-```{r}
-data.pca <- prcomp(data[,-10001])
-```
-
-```{r}
-pcaCharts(data.pca)
-```
-
-```{r}
-pc.use <- find_pc_num(data.pca) # explains 80% of variance
-data.pca <- data.pca$x[,1:pc.use] %*% t(data.pca$rotation[,1:pc.use])
-```
-
-```{r}
-# Train test split
-set.seed(48763)
-train_index <- sample(1:nrow(data.pca),(0.7*nrow(data.pca)))
-train <- data.pca[train_index,]
-test <- data.pca[-train_index,]
-label <- data[,10001]
-x_train <- train[,-10001]
-y_train <- label[train_index]
-x_test <- test[,-10001]
-y_test <- label[-train_index]
-rm(train, test) # Throw to garbage
-```
-
-### 2. SVM
-
-```{r}
-### tuning parameters (cost,gamma) via 10-fold CV
-set.seed(1)
-tune.out <- tune(svm, 
-                 train.x = x_train,
-                 train.y = y_train,
-                 ranges = list( # No need to scale in this case
-                   cost = c(0.1, 1, 10, 100, 1000),
-                   gamma = c(0.5, 1, 2, 3, 4),
-                   kernel = c('radial', 'linear', 'polynomial', 'sigmoid')
-                   )
-                 )
-summary(tune.out)
-```
-
-```{r}
-###
-table(true = y_test, 
-      pred = predict(tune.out$best.model, newdata = x_test))
-```
-
-### 3. Random Forest
-
-```{r}
-train_rf <- data[train_index,]
-test_rf <- data[-train_index,]
-```
-
-Since there are 10000 features, I take $\texttt{mtry}=\lceil\sqrt{10000}\rceil=100$.
-
-```{r}
-rf <- randomForest(y~., 
-                   data=train_rf,
-                   mtry = 10000,          # number of variables tried at each split
-                   importance = TRUE,
-                   proximity = TRUE)
-plot(rf)
-```
-
-```{r}
-modfinal_rf <- randomForest(y~., 
-                            data=train_rf,
-                            mtry = 10000, 
-                            ntree = 250,
-                            importance = TRUE,
-                            proximity = TRUE)
-```
-
-```{r}
-table(true = test_rf[,10001], 
-      pred = predict(modfinal_rf, newdata = test_rf[,-10001]))
-```
-
-```{r}
-modfinal_rf$importance %>% 
-  as.matrix() %>% 
-  as.data.frame() %>% 
-  add_rownames() %>% 
-  `colnames<-`(c("varname",'No','Yes',"MeanDecreaseAccuracy",'MeanDecreaseGini')) %>%
-  arrange(desc(MeanDecreaseAccuracy)) %>% 
-  top_n(15,wt = MeanDecreaseAccuracy) %>% 
-  ggplot(aes(x = reorder(varname, MeanDecreaseAccuracy),y = MeanDecreaseAccuracy)) +
-  geom_col(fill = 'steelblue', color = 'black') +
-  coord_flip() +
-  ggtitle(label = "Random Forest") +
-  xlab('Variable') +
-  ylab('MeanDecreaseAccuracy') +
-  theme(plot.title=element_text(hjust=0.5,size=15),
-        axis.title=element_text(size=15))
-```
-
-### 4. Clustering the data
-
-Perhaps I have no time to do this part.
-
-### 5. Summary
-
-```{r}
-rm(x_train, y_train, x_test, y_test, data_def, data_ok, train_rf, test_rf, data, data.pca)
-```
-
-------------------------------------------------------------------------------
-
-## Problem 2: Forecast for SP500 returns
 
 ### 1 Data preprossesing
 
@@ -275,22 +90,26 @@ head(SPY.trend)
 ```{r}
 # Train test split
 train_index2 <- seq(1,2988)
+
+# For regression
 train_reg <- SPY.return[train_index2,] # before 2021-12-31
 test_reg <- SPY.return[-train_index2,] # after 2022-01-03
-train_dummy_X <- model.matrix(~.,train_class[,-1])[,-1]
-test_dummy_X <- model.matrix(~.,test_class[,-1])[,-1]
+x_train_reg <- train_reg[,-1]
+x_test_reg <- test_reg[,-1]
 y_train_reg <- train_reg[,1]
 y_test_reg <- test_reg[,1]
-```
 
-```{r}
-# Train test split
+# For SVM
 train_class <- SPY.trend[train_index2,] # before 2021-12-31
 test_class <- SPY.trend[-train_index2,] # after 2022-01-03
 x_train_class <- train_class[,-1]
 y_train_class <- factor(train_class[,1])
 x_test_class <- test_class[,-1]
 y_test_class <- factor(test_class[,1])
+
+# For random forest
+train_dummy_X <- model.matrix(~.,train_class[,-1])[,-1]
+test_dummy_X <- model.matrix(~.,test_class[,-1])[,-1]
 ```
 
 ### 2. Regression
@@ -316,9 +135,13 @@ abline(0, 1)
 mean((yhat.rf - y_test_reg)^2)
 ```
 
+The regression result looks good (MSE=0.000138).
+
 ```{r}
 varImpPlot(rf_stock)
 ```
+
+For MSE, yesterday's close price, RSI, MACD (along with the signal line) determines today's price. For interpret, MACD gives the moving average and trend of stock price, and RSI indicates whether the stocks go up or down to what extend.
 
 #### (2) LASSO
 
@@ -328,6 +151,8 @@ grid <- 10^seq(5, -10, length = 100) # use grid search to find lambda
 cv.out <- cv.glmnet(train_dummy_X, y_train_reg, alpha = 1, nfolds=5, lambda=grid) # LASSO
 plot(cv.out)
 ```
+
+Choose the best LASSO $\lambda$ value.
 
 ```{r}
 bestlam_lasso <- cv.out$lambda.min # best lambda
@@ -351,6 +176,8 @@ MSE_train
 MSE_test
 ```
 
+The test MSE is 0.00016, it does not differs a lot from random forest.
+
 ```{r}
 lasso_coeff <- predict(lasso.stock, 
                        s = bestlam_lasso, 
@@ -364,6 +191,7 @@ lasso_coeff[1:14,][which(lasso_coeff!=0)]
 ```{r}
 plot(lasso.stock)
 ```
+For LASSO, the past closed value (in 5 days) are more important than they are for random forest. Besides, the volume does not play a big role.
 
 ### 3. Classification
 
@@ -372,13 +200,13 @@ plot(lasso.stock)
 ```{r}
 ### tuning parameters (cost,gamma) via 10-fold CV
 set.seed(1)
-tune_stock.out <- tune(svm, 
+tune_stock.out <- tune(svm,
                        train.x = x_train_class,
                        train.y = y_train_class,
                        ranges = list(
-                         cost = c(0.01, 0.1, 1, 10, 100, 1000),
-                         gamma = c(0.1, 0.5, 1, 2, 3, 4),
-                         kernel = 'radial',#c('radial', 'linear', 'polynomial', 'sigmoid'),
+                         cost = c(0.1, 1, 10, 100),
+                         gamma = c(0.1, 1, 2, 3, 4),
+                         kernel = 'linear',
                          scale = TRUE # Need to scale in this case
                          )
                        )
@@ -387,9 +215,11 @@ summary(tune_stock.out)
 
 ```{r}
 ###
-table(true = y_test_class, 
+table(true = y_test_class,
       pred = predict(tune_stock.out$best.model, newdata = x_test_class))
 ```
+
+The best accuracy is 70.92%.
 
 #### (2) Random Forest
 
@@ -418,6 +248,8 @@ table(true = y_test_class,
       pred = predict(modfinal_rf_stock, newdata = x_test_class))
 ```
 
+The accuracy is 0.74. Next, we investigate the variable importance and interpret in the summary.
+
 ```{r}
 modfinal_rf_stock$importance %>% 
   as.matrix() %>% 
@@ -438,5 +270,5 @@ modfinal_rf_stock$importance %>%
 
 ### 4. Summary
 
-
+The accuracy is about 74% to 75% for both randomforest and SVM, to predict the value and the trend, random forest prefers the technical indicators such as RSI and MACD. However, LASSO relys a lot from past prices. The fine-tuned performance of random forest is better than SVM.
 

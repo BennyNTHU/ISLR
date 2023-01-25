@@ -1,0 +1,781 @@
+---
+title: "FP"
+output: html_document
+date: "2023-01-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library("jpeg")
+library("plyr")
+library(TTR)
+library(gbm)
+library(tree)
+library(e1071)
+library(caret)
+library(class)
+library(glmnet)
+library(ggplot2) 
+library(xgboost)
+library(quantmod)
+library(tidyverse) # %>%
+library(ggcorrplot)
+library(randomForest)
+library(ROSE)
+library(MASS)
+```
+
+## 1. Data Preprocessing
+
+### (1) Read Data
+
+```{r}
+card <- read.csv(file="Credit Card Defaulter Prediction.csv") #read data
+card <- card[,-1] # Drop the ID column
+head(card) 
+### ONLY FOR TESTING!!!
+# card <- card[1:100,]
+```
+
+### (2) Clean Garbage
+
+```{r}
+unique(card["SEX"])
+```
+
+```{r}
+unique(card["EDUCATION"])
+```
+
+There are 331 of "unknowns" and 14 of "0" in \texttt{EDUCATION}, we delete these data.
+
+```{r}
+unique(card["MARRIAGE"])
+```
+
+There are 123 of "Other" in \texttt{MARRIAGE}, we delete these data.
+
+```{r}
+card <- subset(card, MARRIAGE!="Other" & EDUCATION!="Others" & card$EDUCATION!=0 & card$MARRIAGE!=0)
+card <- na.omit(card)
+```
+
+### (3) One-hot encoding
+
+```{r}
+# Separate the labels and the features first
+label <- card[,24]
+card <- card[,-24]
+
+# One-hot encoding for the categorical features
+dummy <- dummyVars(" ~ .", data=card)
+card <- data.frame(predict(dummy, newdata=card))
+
+# Recover the dataset
+card <- cbind(card, label)
+head(card)
+```
+
+### (4) Train-test split
+
+```{r}
+# Train test split
+set.seed(48763)
+train_index <- sample(1:nrow(card),(0.7*nrow(card)))
+label <- card[,29]
+
+# The training set and testing set
+train <- card[train_index,]
+test <- card[-train_index,]
+train$label=as.numeric(train$label=="Y")
+test$label=as.numeric(test$label=="Y")
+# For SVM
+x_train <- train[,-29]
+y_train <-factor(label[train_index])
+x_test <- test[,-29]
+y_test <- factor(label[-train_index])
+
+# For XGBoost
+train_dummy_X <- model.matrix(~.,train)[,-1][,-29]
+test_dummy_X <- model.matrix(~.,test)[,-1][,-29]
+train_dummy_y <- as.numeric(as.factor(y_train))-1
+test_dummy_y <- as.numeric(as.factor(y_test))-1
+```
+
+## 2. EDA
+
+```{r}
+par(mfrow=c(1,2))
+hist((card[card$label=="Y",])$LIMIT_BAL ,main = "Defaulter")
+hist((card[card$label=="N",])$LIMIT_BAL ,main = "Not Defaulter")
+```
+
+```{r}
+fun_mean <- function(x){
+  return(data.frame(y=mean(x), label= round(mean(x,na.rm=T), 1)))}
+
+plot_box <- function(var, str){
+  ggplot(card,aes(x=label, y=var, fill=label))+
+    geom_boxplot()+ # box plot
+    stat_summary(fun.y=mean, geom="point", size=3,show.legend=F)+   # mean
+    stat_summary(fun.data =fun_mean, geom="text", vjust=-0.7,show.legend=F)+  # mean
+    xlab(str)+
+    ylab('count')+
+    ggtitle(paste("Boxplot of ", str))+
+    theme_minimal() +
+    theme(plot.title=element_text(hjust=0.5,size=15),
+          axis.title=element_text(size=15),
+          axis.text = element_text(size=12),
+          legend.text=element_text(size=12),
+          legend.title=element_text(size=12),
+          legend.position = 'top')}
+```
+
+```{r}
+plot_box(card$PAY_0, "PAY_0")
+```
+
+## 3. Different Classification Algorithm
+
+### (1) XGBoost
+
+```{r}
+# model_xgb <- xgb.cv(data = train_dummy_X,
+#                     label = train_dummy_y,
+#                     nfold = 5,
+#                     nrounds = 200,
+#                     objective='binary:logistic',
+#                     eval_metric = "error",
+#                     verbose = F)
+```
+
+```{r}
+# # create hyperparameter grid
+# hyper_grid <- expand.grid(
+#   eta = c(0.01,0.05,0.1,0.15,0.2,0.25,0.3),
+#   max_depth = c(2:5),
+#   min_child_weight = 2*c(1:5),
+#   subsample = c(0.6,0.7,0.8,0.9),
+#   colsample_bytree = c(0.6,0.7,0.8,0.9),
+#   optimal_trees = 0,               # a place to dump results
+#   min_error = 0)                   # a place to dump results
+```
+
+```{r}
+# # grid search
+# for(i in 1:nrow(hyper_grid)) {
+# 
+#   # create parameter list
+#   params <- list(
+#     eta = hyper_grid$eta[i],
+#     max_depth = hyper_grid$max_depth[i],
+#     min_child_weight = hyper_grid$min_child_weight[i],
+#     subsample = hyper_grid$subsample[i],
+#     colsample_bytree = hyper_grid$colsample_bytree[i])
+# 
+#   # reproducibility
+#   set.seed(123)
+# 
+#   # train model
+#   xgb.tune <- xgb.cv(
+#     params = params,
+#     data = train_dummy_X,
+#     label = train_dummy_y,
+#     nrounds = 500,
+#     nfold = 5,
+#     objective = "binary:logistic",
+#     eval_metric = "error",
+#     verbose = 0,               # silent,
+#     early_stopping_rounds = 10) # stop if no improvement for 10 consecutive trees
+# 
+# 
+#   # add min training error and trees to grid
+#   hyper_grid$optimal_trees[i] <- which.min(xgb.tune$evaluation_log$test_error_mean)
+#   hyper_grid$min_error[i] <- min(xgb.tune$evaluation_log$test_error_mean)
+# }
+```
+
+```{r}
+# best_para <- hyper_grid %>%
+#   dplyr::arrange(min_error) %>%
+#   head(1)
+```
+
+利用以上的code挑選完參數後記錄在下方
+
+```{r}
+# The best parameter is listed below:
+# eta=best_para$eta=0.05
+# max_depth=best_para$max_depth=2
+# min_child_weight=best_para$min_child_weight=2
+# subsample=best_para$subsample=0.6
+# colsample_bytree=best_para$colsample_bytree=0.6
+# optimal_trees=best_para$optimal_trees=14
+```
+
+重新訓練一個最佳的XGBoost
+
+```{r}
+# parameter list
+params <- list(
+  eta = 0.05,
+  max_depth = 2,
+  min_child_weight = 2,
+  subsample = 0.6,
+  colsample_bytree = 0.6)
+```
+
+```{r}
+set.seed(114514)
+# train final model
+modfinal_xgb <- xgboost(
+  params = params,
+  data = train_dummy_X, 
+  label = train_dummy_y,
+  nrounds = 71,
+  objective='binary:logistic',
+  eval_metric = "error",  
+  verbose = 0)
+```
+
+藉由手動調整threshold，我們發現最佳的threshold是predict出來的值>0.5
+
+```{r}
+y_pred <- predict(modfinal_xgb, newdata = test_dummy_X)
+y_pred <- as.numeric(y_pred > 0.5)
+# Confusion Matrix
+confusion_mtx = table(test_dummy_y, y_pred)
+confusion_mtx
+```
+
+```{r}
+xgb.importance(model = modfinal_xgb) %>% 
+  as.data.frame() %>% 
+  `colnames<-`(c("Feature",'Gain','Cover',"Frequency")) %>%
+  arrange(desc(Gain)) %>% 
+  top_n(15,wt = Gain) %>% 
+  ggplot(aes(x = reorder(Feature, Gain),y = Gain)) +
+  geom_col(fill = 'steelblue', color = 'black') +
+  coord_flip() +
+  ggtitle(label = "XGBoost") +
+  xlab('Variable')+
+  ylab('Gain')+
+  theme(plot.title=element_text(hjust=0.5,size=15),
+        axis.title=element_text(size=15))
+```
+
+### (2) SVM
+
+```{r}
+## tuning parameters (cost,gamma) via 10-fold CV
+# set.seed(1)
+# tune.out <- tune(svm, 
+#                  train.x = x_train,
+#                  train.y = y_train,
+#                  ranges = list( # No need to scale in this case
+#                    cost = c(0.1, 1, 10, 100, 1000),
+#                    gamma = c(0.5, 1, 2, 3, 4),
+#                    kernel = c('radial', 'linear', 'polynomial', 'sigmoid'),
+#                    scale = TRUE # Need to scale in this case
+#                    )
+#                  )
+# summary(tune.out)
+```
+
+```{r}
+# table(true = y_test, 
+#       pred = predict(tune.out$best.model, newdata = x_test))
+```
+
+```{r}
+svm_li <- svm(x = x_train,
+              y = y_train,
+              kernel = "linear", 
+              cost = 10, 
+              gamma = 1,
+              scale = TRUE)
+```
+
+```{r}
+table(true = y_test, pred = predict(svm_li, newdata = x_test))
+```
+
+```{r}
+mean(y_test==predict(svm_li, newdata = x_test))
+```
+
+###Linear
+
+```{r}
+
+
+# 利用linear fitting 看看顯著關係
+lm.fit0=lm(label~.,data=train)
+summary(lm.fit0)
+# 可以利用Step來挑選變數
+step(lm.fit0,direction="backward")
+
+```
+* 可以發現是不是default與 BILL_AMT1,PAY_AMT1,PAY_0,PAY_2,PAY_3,AGE,MARRIAGE,SEX,LIMIT_BAL 有比較大的顯著關係。  
+比較令人訝異的是education沒有顯著的關係，另外就是他會與比較近期的繳費帳單有關係 而往後的資訊就比較沒有。  
+
+* fitting 出來的R2 也沒有很好 ，因為這是一個分類問題利用linear regression比較不會有好的表現。
+
+* 而我們利用Step 挑選出來的變數是下列這些    
+formula = default ~ LIMIT_BAL + SEXF + EDUCATIONGraduate.school + 
+    EDUCATIONHigh.School + EDUCATIONUniversity + MARRIAGEMarried + 
+    AGE + PAY_0 + PAY_2 + PAY_3 + PAY_6 + BILL_AMT1 + BILL_AMT4 + 
+    BILL_AMT5 + PAY_AMT1 + PAY_AMT2 + PAY_AMT4
+這些變數可以當作我們後便model挑選變數的參考。  
+
+###logistic
+**Fitting**
+```{r}
+# all variable
+glm.fit0=glm(label~.,data=train,family=binomial)
+summary(glm.fit0)
+# my select variable
+glm.fit1=glm(label~.-PAY_6-BILL_AMT6-PAY_AMT6,data=train,family=binomial)
+summary(glm.fit1)
+glm.fit2=glm(label~.-PAY_6-BILL_AMT6-PAY_AMT6-BILL_AMT5-PAY_AMT5,data=train,family=binomial)
+summary(glm.fit2)
+glm.fit3=glm(label~.-PAY_6-BILL_AMT6-PAY_AMT6-BILL_AMT5-PAY_AMT5-BILL_AMT4,data=train,family=binomial)
+summary(glm.fit3)
+# AIC select variable
+glm.fit4=glm(label~LIMIT_BAL + SEXF + EDUCATIONGraduate.school + 
+    EDUCATIONHigh.School + EDUCATIONUniversity + MARRIAGEMarried + 
+    AGE + PAY_0 + PAY_2 + PAY_3 + PAY_6 + BILL_AMT1 + BILL_AMT4 + 
+    BILL_AMT5 + PAY_AMT1 + PAY_AMT2 + PAY_AMT4 ,data=train,family=binomial)
+summary(glm.fit4)
+```
+* 首先我們fit 全部的data，在logistic regression 裡面EDUCATION 是有顯著關係的與linear的不太一樣接下來我們刪掉依序刪掉ATM大到小看看。
+因為PAY，BILL_AMT，PAY_AMT是有月份關係的因此我認為不能刪掉隔月的資訊我們保留下來的月分都要是連續的。  
+
+* 而全部fit裡面變數都為顯著的model的model 是我們利用backward step(AIC) 所挑選出來的。
+
+
+**Evaluation**
+```{r}
+# all 
+par(mfrow=c(1,2))
+## train set
+glm.fit0.probs=predict(glm.fit0,type='response')
+glm.fit0.pred=train$label
+glm.fit0.pred[glm.fit0.probs>0.5]=1
+glm.fit0.pred[glm.fit0.probs<=0.5]=0
+table1=table(glm.fit0.pred,train$label)
+table1
+mean(glm.fit0.pred==train$label)
+## test set
+glm.fit0.testprobs=predict(glm.fit0,test,type = "response")
+glm.fit0.testpred=test$label
+glm.fit0.testpred[glm.fit0.testprobs>0.5]=1
+glm.fit0.testpred[glm.fit0.testprobs<=0.5]=0
+table1=table(glm.fit0.testpred,test$label)
+table1
+mean(glm.fit0.testpred==test$label)
+## ROC
+roc.curve(train$label, glm.fit0.probs, plotit = T,main='train ROC curvve')
+roc.curve(test$label, glm.fit0.testprobs, plotit = T,main='test ROC curvve')
+# 依據顯著程度篩選的model
+par(mfrow=c(1,2))
+## train set
+glm.fit3.probs=predict(glm.fit3,type='response')
+glm.fit3.pred=train$label
+glm.fit3.pred[glm.fit3.probs>0.5]=1
+glm.fit3.pred[glm.fit3.probs<=0.5]=0
+table1=table(glm.fit3.pred,train$label)
+table1
+mean(glm.fit3.pred==train$label)
+## test set
+glm.fit3.testprobs=predict(glm.fit3,test,type = "response")
+glm.fit3.testpred=test$label
+glm.fit3.testpred[glm.fit3.testprobs>0.5]=1
+glm.fit3.testpred[glm.fit3.testprobs<=0.5]=0
+table1=table(glm.fit3.testpred,test$label)
+table1
+mean(glm.fit3.testpred==test$label)
+## ROC
+roc.curve(train$label, glm.fit3.probs, plotit = T,main='train ROC curvve')
+roc.curve(test$label, glm.fit3.testprobs, plotit = T,main='test ROC curvve')
+# AIC 篩選的model
+par(mfrow=c(1,2))
+## train set
+glm.fit4.probs=predict(glm.fit4,type='response')
+glm.fit4.pred=train$label
+glm.fit4.pred[glm.fit4.probs>0.5]=1
+glm.fit4.pred[glm.fit4.probs<=0.5]=0
+table1=table(glm.fit4.pred,train$label)
+table1
+mean(glm.fit4.pred==train$label)
+## test set
+glm.fit4.testprobs=predict(glm.fit4,test,type = "response")
+glm.fit4.testpred=test$label
+glm.fit4.testpred[glm.fit4.testprobs>0.5]=1
+glm.fit4.testpred[glm.fit4.testprobs<=0.5]=0
+table1=table(glm.fit4.testpred,test$label)
+table1
+mean(glm.fit4.testpred==test$label)
+## ROC
+roc.curve(train$label, glm.fit4.probs, plotit = T,main='train ROC curvve')
+roc.curve(test$label, glm.fit4.testprobs, plotit = T,main='test ROC curvve')
+```
+* all data   
+AUC:    
+  train : 0.724  
+  test  : 0.726  
+ACC:  
+  train : 0.8141653 
+  test  : 0.8064881  
+  
+* my select data   
+AUC:    
+  train :  0.724  
+  test  : 0.729 
+ACC:
+  train : 0.8052447  
+  test  : 0.8052447 
+  
+* AIC select data   
+AUC:    
+  train : 0.723 
+  test  : 0.726
+ 
+ACC:  
+  train : 0.8138262 
+  test  : 0.806375  
+
+* 正確率以及AUC 三個model的表現都差不多。並沒有太大的提升。
+
+### lda
+* 現在我們只使用上述所用到的變數做fitting  
+**Fitting**
+```{r}
+# all variable
+lda.fit0=lda(label~.,data=train)
+lda.fit0
+# my select variable
+lda.fit3=lda(label~.-PAY_6-BILL_AMT6-PAY_AMT6-BILL_AMT5-PAY_AMT5-BILL_AMT4,data=train)
+lda.fit3
+# AIC select variable
+lda.fit4=lda(label~LIMIT_BAL + SEXF + EDUCATIONGraduate.school + 
+    EDUCATIONHigh.School + EDUCATIONUniversity + MARRIAGEMarried + 
+    AGE + PAY_0 + PAY_2 + PAY_3 + PAY_6 + BILL_AMT1 + BILL_AMT4 + 
+    BILL_AMT5 + PAY_AMT1 + PAY_AMT2 + PAY_AMT4,data=train)
+lda.fit4
+```
+* 不是default 的prior比較高 我想這是因為大多數的人都不使default。
+
+**Evaluation**
+```{r}
+# all 
+par(mfrow=c(1,2))
+## train set
+lda.fit0.pred=predict(lda.fit0)
+table(lda.fit0.pred$class,train$label)
+mean(lda.fit0.pred$class==train$label)
+## test set
+lda.fit0.testpred=predict(lda.fit0,test)
+table(lda.fit0.testpred$class,test$label)
+mean(lda.fit0.testpred$class==test$label)
+## ROC
+roc.curve(train$label,lda.fit0.pred$posterior[,2], plotit = T,main='train ROC curvve')
+roc.curve(test$label, lda.fit0.testpred$posterior[,2], plotit = T,main='test ROC curvve')
+# # 依據顯著程度篩選的model
+par(mfrow=c(1,2))
+## train set
+lda.fit3.pred=predict(lda.fit3)
+table(lda.fit3.pred$class,train$label)
+mean(lda.fit3.pred$class==train$label)
+## test set
+lda.fit3.testpred=predict(lda.fit3,test)
+table(lda.fit3.testpred$class,test$label)
+mean(lda.fit3.testpred$class==test$label)
+## ROC
+roc.curve(train$label,lda.fit3.pred$posterior[,2], plotit = T,main='train ROC curvve')
+roc.curve(test$label, lda.fit3.testpred$posterior[,2], plotit = T,main='test ROC curvve')
+# # AIC 篩選的model
+par(mfrow=c(1,2))
+## train set
+lda.fit4.pred=predict(lda.fit4)
+table(lda.fit4.pred$class,train$label)
+mean(lda.fit4.pred$class==train$label)
+## test set
+lda.fit4.testpred=predict(lda.fit4,test)
+table(lda.fit4.testpred$class,test$label)
+mean(lda.fit4.testpred$class==test$label)
+## ROC
+roc.curve(train$label,lda.fit4.pred$posterior[,2], plotit = T,main='train ROC curvve')
+roc.curve(test$label, lda.fit4.testpred$posterior[,2], plotit = T,main='test ROC curvve')
+```
+* all data   
+AUC:    
+  train : 0.718
+  test  : 0.723 
+ACC:  
+  train : 0.8145529
+  test  : 0.8081836 
+  
+* my select data   
+AUC:    
+  train : 0.717
+  test  : 0.725  
+ACC:
+  train : 0.81402
+  test  : 0.8068272  
+  
+* AIC select data   
+AUC:    
+  train : 0.717  
+  test  : 0.723 
+ACC:  
+  train : 0.8146497 
+  test  : 0.8080705
+
+* 正確率以及AUC 三個model的表現都差不多。並沒有太大的提升。
+
+### qda
+<!-- **Fitting** -->
+<!-- ```{r} -->
+<!-- # all variable -->
+<!-- qda.fit0=qda(label~.,data=train) -->
+<!-- qda.fit0 -->
+<!-- # my select variable -->
+<!-- qda.fit3=qda(label~.-PAY_6-BILL_AMT6-PAY_AMT6-BILL_AMT5-PAY_AMT5-BILL_AMT4,data=train) -->
+<!-- qda.fit3 -->
+<!-- # AIC select variable -->
+<!-- qda.fit4=qda(label~LIMIT_BAL + SEXF + EDUCATIONGraduate.school + EDUCATIONHigh.School +  -->
+<!--     EDUCATIONUniversity + MARRIAGEMarried + AGE + PAY_0 + PAY_2 +  -->
+<!--     PAY_3 + PAY_6 + BILL_AMT1 + BILL_AMT4 + BILL_AMT5 + PAY_AMT1 +  -->
+<!--     PAY_AMT2 + PAY_AMT4 ,data=train) -->
+<!-- qda.fit4 -->
+<!-- ``` -->
+<!-- **Evaluation** -->
+<!-- ```{r} -->
+<!-- # all  -->
+<!-- par(mfrow=c(1,2)) -->
+<!-- ## train set -->
+<!-- qda.fit0.pred=predict(qda.fit0) -->
+<!-- table(qda.fit0.pred$class,train_set$default) -->
+<!-- mean(qda.fit0.pred$class==train_set$default) -->
+<!-- ## test set -->
+<!-- qda.fit0.testpred=predict(qda.fit0,test_set) -->
+<!-- table(qda.fit0.testpred$class,test_set$default) -->
+<!-- mean(qda.fit0.testpred$class==test_set$default) -->
+<!-- ## ROC -->
+<!-- roc.curve(train_set$default,qda.fit0.pred$posterior[,2], plotit = T,main='train ROC curvve') -->
+<!-- roc.curve(test_set$default, qda.fit0.testpred$posterior[,2], plotit = T,main='test ROC curvve') -->
+<!-- # # 依據顯著程度篩選的model -->
+<!-- par(mfrow=c(1,2)) -->
+<!-- ## train set -->
+<!-- qda.fit3.pred=predict(qda.fit3) -->
+<!-- table(qda.fit3.pred$class,train_set$default) -->
+<!-- mean(qda.fit3.pred$class==train_set$default) -->
+<!-- ## test set -->
+<!-- qda.fit3.testpred=predict(qda.fit3,test_set) -->
+<!-- table(qda.fit3.testpred$class,test_set$default) -->
+<!-- mean(qda.fit3.testpred$class==test_set$default) -->
+<!-- ## ROC -->
+<!-- roc.curve(train_set$default,qda.fit3.pred$posterior[,2], plotit = T,main='train ROC curvve') -->
+<!-- roc.curve(test_set$default, qda.fit3.testpred$posterior[,2], plotit = T,main='test ROC curvve') -->
+<!-- # # AIC 篩選的model -->
+<!-- par(mfrow=c(1,2)) -->
+<!-- ## train set -->
+<!-- qda.fit4.pred=predict(qda.fit4) -->
+<!-- table(qda.fit4.pred$class,train_set$default) -->
+<!-- mean(qda.fit4.pred$class==train_set$default) -->
+<!-- ## test set -->
+<!-- qda.fit4.testpred=predict(qda.fit4,test_set) -->
+<!-- table(qda.fit4.testpred$class,test_set$default) -->
+<!-- mean(qda.fit4.testpred$class==test_set$default) -->
+<!-- ## ROC -->
+<!-- roc.curve(train_set$default,qda.fit4.pred$posterior[,2], plotit = T,main='train ROC curvve') -->
+<!-- roc.curve(test_set$default, qda.fit4.testpred$posterior[,2], plotit = T,main='test ROC curvve') -->
+<!-- ``` -->
+* all data   
+AUC:    
+  train : 0.727
+  test  : 0.711  
+ACC:  
+  train : 0.5330946
+  test  : 0.5296596  
+  
+* my select data   
+AUC:    
+  train :  0.735 
+  test  : 0.714
+ACC:
+  train : 0.6981251
+  test  : 0.6857095 
+  
+* AIC select data   
+AUC:    
+  train : 0.737 
+  test  : 0.717
+ACC:  
+  train : 0.740889 
+  test  : 0.731547  
+
+* 正確率以及AUC 三個model的中由AIC 所選擇的變數 為最好 ，可以看到 all variable的model表現最差。
+但整體來看的話qda的表現沒有lda好。
+
+### knn
+
+**data preprocess**
+```{r}
+# normalize the data
+knn_train=train
+knn_train[,c(-2, -4 ,-24)] = scale(train[,c(-2, -4 ,-24)])
+
+knn_test=test
+knn_train[,c(-2, -4 ,-24)] = scale(train[,c(-2, -4 ,-24)])
+
+```
+**Fitting**
+```{r}
+set.seed(1)
+# find the best k
+best_k=0
+best_acc=0
+for (k in 1:50){
+  # print(k)
+  knn.pred= knn(train[,-24], test[,-24], train$label, k = k)
+  acc=mean(knn.pred==test$label)
+  if(acc>best_acc){
+    best_k=k
+    best_acc=acc
+  }
+}
+best_k
+best_acc
+```
+**Evaluation**
+```{r}
+# show the result
+best_knn.pred=knn(train_set[,-24], test_set[,-24], train_set$default, k = best_k)
+mean(best_knn.pred==test_set$default)
+```
+* accuracy is 0.7760364
+
+
+
+
+## *classification tree*
+
+
+```{r}
+library(tree)
+train$label <- as.factor(train$label)
+tree.fit <- tree(label ~ .  ,data = train)
+tree.fit
+```
+
+```{r}
+plot(tree.fit)
+text(tree.fit, pretty = 0)
+```
+
+上圖為tree的結果，接著用cv考慮剪枝：
+
+```{r}
+set.seed(123456)
+
+cv.fit <- cv.tree(tree.fit, FUN = prune.misclass)
+cv.fit
+plot(cv.fit$size, cv.fit$dev, type = "b")
+```
+
+在4個節點時有最小的dev，故不進行修剪。
+
+預測結果：
+
+```{r}
+tree.pred <- predict(tree.fit,test ,type = "class")
+table(tree.pred,test$label)
+mean(tree.pred == test$label)
+```
+
+預測正確率81.55%，是蠻好的結果。
+
+## *random forest*
+
+此處的mtry先嘗試取$\sqrt{p} = 5$。
+
+```{r}
+library(randomForest)
+set.seed(1)
+rf.fit <- randomForest(default ~ . - ID, data = credit,
+    subset = train, mtry = 5,ntree = 200, importance = TRUE)
+rf.fit
+```
+
+接著嘗試去tune mtry的值：
+
+```{r}
+tuneRF(train[,1:28],train[,29], ntreeTry = 200)
+```
+
+可發現當ntree=200時在m = 5下會有最小的OOB error，故使用m = 5再配適一次模型：
+
+```{r}
+set.seed(1)
+rf.fit2 <- randomForest(label~., data = train,
+     mtry = 5,ntree = 200, importance = TRUE)
+rf.fit2
+```
+
+
+以下進行預測：
+
+```{r}
+rf.pred <- predict(rf.fit2,test ,type = "class")
+table(rf.pred,test$label)
+mean(rf.pred == test$label)
+```
+
+預測正確率81.93%，與先前的tree model結果相差不大。
+
+
+接著觀察重要變數
+
+```{r}
+importance(rf.fit2)
+varImpPlot(rf.fit2)
+```
+
+可以發現在所有變數之重PAY_0明顯最為重要，BILL_AMT1~6也都被排在比較重要的位置。
+
+從最上方的tree可看出：PAY_0 > 1.5的人，也就是延期付款超過兩個月以上的人，比較容易被分到信用破產的一邊。
+
+反而教育程度、是否已婚等原本預想中有可能會造成影響的因子皆顯示沒有那麼重要。
+
+## *Boosting*
+
+```{r}
+library(gbm)
+set.seed(1)
+boost.fit <- gbm(label ~ . , data = train,
+    distribution = "gaussian", n.trees = 5000,
+    interaction.depth = 4)
+
+summary(boost.fit)
+```
+
+
+從Boosting的結果可以看出PAY_0仍然最為重要，而其他像是BILL_AMT1也較為重要，跟剛剛random forest跑出的重要變數排行表有類似的結果。
+
+
+
+
+## 5. Summary
+
+
+
+
+
+
+
+

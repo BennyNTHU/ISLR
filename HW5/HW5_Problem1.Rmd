@@ -1,0 +1,228 @@
+---
+title: 'HW5: Problem 1'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library("jpeg")
+library("plyr")
+library(e1071)
+library(tidyverse) # %>%
+library(tree)
+library(gbm)
+library(randomForest)
+library(glmnet)
+library(ggplot2) 
+library(class)
+library(xgboost)
+library(ggcorrplot)
+library(TTR)
+library(quantmod) 
+```
+
+## Problem 1: Fault Classification
+
+```{r}
+setwd("casting_100x100")
+
+def_paths <- dir("def_front")
+ok_paths <- dir("ok_front")
+
+data_def = sapply(1:length(def_paths), function(x){
+  tmp = readJPEG(paste0("def_front/", def_paths[x]))[,,1]
+  tmp = as.vector(tmp)
+  return(tmp)
+})
+
+data_ok = sapply(1:length(ok_paths), function(x){
+  tmp = readJPEG(paste0("ok_front/", ok_paths[x]))[,,1]
+  tmp = as.vector(tmp)
+  return(tmp)
+})
+
+data = as.data.frame(rbind(t(data_def), t(data_ok)))
+data$y = as.factor(c(rep(1,length(def_paths)), rep(0,length(ok_paths))))
+dim(data)
+
+## Data Preprocessing
+
+show_image = function(img_cast, col = gray(1:20/20), ...){
+  image(matrix(as.matrix(img_cast), ncol = 100, byrow = TRUE)[, 100:1], col = col, ...)
+}
+
+## show images for a defect item and a good (OK) item
+par(mfrow = c(1,1), pty="s")
+show_image(data[1,-10001], col = gray(1:20/20), axes=F); box(); title("Defect Item (id=1)")
+show_image(data[length(def_paths)+1,-10001], col = gray(1:20/20), axes=F); box(); title("OK Item (id=3759)")
+```
+
+```{r}
+### For testing only!!!
+#data <- rbind(data[1:10,],data[6623:6633,])
+```
+
+### 1. Dimension Reduction
+
+It is really impossible to take all 10000 pixels into consideration. Hence, I prefer a PCA dimension reduction before any further classification effort.
+
+```{r}
+pcaCharts <- function(x) {
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    #print("proportions of variance:")
+    #print(x.pvar)
+    
+    par(mfrow=c(2,2))
+    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), type='b')
+    plot(cumsum(x.pvar),
+         xlab="Principal component", 
+         ylab="Cumulative Proportion of variance explained", 
+         ylim=c(0,1), 
+         type='b')
+    screeplot(x)
+    screeplot(x,type="l")
+    par(mfrow=c(1,1))
+}
+```
+
+```{r}
+find_pc_num <- function(x) { # 60% of cumulative proportion of variance
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    min(which(cumsum(x.pvar) >0.6))
+}
+```
+
+```{r}
+data.pca <- prcomp(data[,-10001])
+```
+
+```{r}
+pcaCharts(data.pca)
+```
+
+Here, I select the PCs such that they accumulate to 80% of variance.
+
+```{r}
+pc.use <- find_pc_num(data.pca) # explains 60% of variance
+data.pca <- data.pca$x[,1:pc.use] %*% t(data.pca$rotation[,1:pc.use])
+```
+
+Then, conduct the train-test-split.
+
+```{r}
+# Train test split
+set.seed(48763)
+train_index <- sample(1:nrow(data.pca),(0.7*nrow(data.pca)))
+train <- data.pca[train_index,]
+test <- data.pca[-train_index,]
+label <- data[,10001]
+x_train <- train[,-10001]
+y_train <- label[train_index]
+x_test <- test[,-10001]
+y_test <- label[-train_index]
+rm(train, test) # Throw to garbage
+```
+
+### 2. SVM
+
+```{r}
+### tuning parameters (cost,gamma) via 10-fold CV
+# set.seed(1)
+# tune.out <- tune(svm, 
+#                  train.x = x_train,
+#                  train.y = y_train,
+#                  ranges = list( # No need to scale in this case
+#                    cost = c(0.1, 1, 10, 100, 1000),
+#                    gamma = c(0.5, 1, 2, 3, 4),
+#                    kernel = c('radial', 'linear', 'polynomial', 'sigmoid')
+#                    )
+#                  )
+# summary(tune.out)
+```
+
+```{r}
+# table(true = y_test, 
+#       pred = predict(tune.out$best.model, newdata = x_test))
+```
+
+```{r}
+svm_pca <- svm(x = x_train,
+               y = y_train,
+               kernel = 'linear',
+               cost = 10,
+               gamma = 1,
+               scale = TRUE)
+```
+
+```{r}
+table(true = y_test, pred = predict(svm_pca, newdata = x_test))
+```
+
+```{r}
+mean(y_test==predict(svm_pca, newdata = x_test))
+```
+
+This parameter combination provides a 85.52% test accuracy.
+
+### 3. Random Forest
+
+```{r}
+train_rf <- data[train_index,]
+test_rf <- data[-train_index,]
+```
+
+Since there are 10000 features, I take $\texttt{mtry}=\lceil\sqrt{10000}\rceil=100$.
+
+```{r}
+modfinal_rf <- randomForest(y~., 
+                            data=train_rf,
+                            mtry = 100, 
+                            ntree = 250,
+                            importance = TRUE,
+                            proximity = TRUE)
+plot(modfinal_rf )
+```
+
+```{r}
+table(true = test_rf[,10001], 
+      pred = predict(modfinal_rf, newdata = test_rf[,-10001]))
+```
+
+```{r}
+(844+1077)/(844+1077+25+44)
+```
+
+The random forest outperforms SVM. It gives a 96.53% test accuracy. Next, I investigate the variable importance, and interpret in the summary.
+
+```{r}
+modfinal_rf$importance %>% 
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  add_rownames() %>% 
+  `colnames<-`(c("varname",'No','Yes',"MeanDecreaseAccuracy",'MeanDecreaseGini')) %>%
+  arrange(desc(MeanDecreaseAccuracy)) %>% 
+  top_n(15,wt = MeanDecreaseAccuracy) %>% 
+  ggplot(aes(x = reorder(varname, MeanDecreaseAccuracy),y = MeanDecreaseAccuracy)) +
+  geom_col(fill = 'steelblue', color = 'black') +
+  coord_flip() +
+  ggtitle(label = "Random Forest") +
+  xlab('Variable') +
+  ylab('MeanDecreaseAccuracy') +
+  theme(plot.title=element_text(hjust=0.5,size=15),
+        axis.title=element_text(size=15))
+```
+### 4. Summary
+
+To detect the defected items, we do not need to take The defect items do not need every pixeld into consideration. Actually, By the above variable importance plots, 7~9 PCs should be enough for random forest.
+
+
+```{r}
+rm(x_train, y_train, x_test, y_test, data_def, data_ok, train_rf, test_rf, data, data.pca)
+```
